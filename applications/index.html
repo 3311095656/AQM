@@ -1,0 +1,1041 @@
+﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AQMV2 智慧环境监测</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+            background: #1a1a1e;
+            min-height: 100vh;
+            padding: 1rem;
+            color: #e5e5e7;
+            position: relative;
+            overflow-x: hidden;
+        }
+        /* 背景装饰光斑（提供毛玻璃透光参照物） */
+        body::before {
+            content: '';
+            position: fixed; top: -20%; left: -10%;
+            width: 50vw; height: 50vw;
+            background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none; z-index: 0;
+        }
+        body::after {
+            content: '';
+            position: fixed; bottom: -15%; right: -5%;
+            width: 45vw; height: 45vw;
+            background: radial-gradient(circle, rgba(236,72,153,0.08) 0%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none; z-index: 0;
+        }
+        .app-container { position: relative; z-index: 1; }
+        .card-glass {
+            background: rgba(45,45,50,0.9);
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(24px) saturate(1.4);
+            -webkit-backdrop-filter: blur(24px) saturate(1.4);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+        }
+        @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+            .card-glass {
+                background: rgba(35,35,40,0.95) !important;
+            }
+        }
+        .card-glass:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.18);
+            transform: translateY(-2px);
+            box-shadow: 0 0 24px rgba(255,255,255,0.06), 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .card-glass:active { transform: scale(0.98); }
+        .icon-box {
+            width: 36px; height: 36px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.08);
+        }
+        .control-btn {
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 14px;
+            transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+            cursor: pointer;
+        }
+        .control-btn:hover {
+            background: rgba(255,255,255,0.14);
+            border-color: rgba(255,255,255,0.12);
+        }
+        .control-btn:active { transform: scale(0.96); }
+        .control-btn-active {
+            background: rgba(255,255,255,0.25) !important;
+            border-color: rgba(255,255,255,0.5) !important;
+            box-shadow: 0 0 20px rgba(255,255,255,0.2), inset 0 0 8px rgba(255,255,255,0.1) !important;
+            transform: scale(1.04);
+        }
+        .pulse-green { animation: pulseG 2s infinite; }
+        @keyframes pulseG {
+            0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(52,211,153,0); }
+        }
+        input[type="time"], select {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08) !important;
+            color: #d1d5db;
+            border-radius: 8px;
+        }
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.7);
+        }
+        canvas { border-radius: 12px; }
+    </style>
+</head>
+<body>
+    <div class="app-container max-w-7xl mx-auto">
+        <!-- 头部 -->
+        <div class="card-glass p-4 mb-5">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <div class="icon-box text-blue-400">
+                        <i class="fa fa-leaf text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold text-gray-100">智慧环境监测</h1>
+                        <p class="text-xs text-gray-400">AQMV2 · STM32F407</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="statusDot" class="w-3 h-3 rounded-full bg-gray-500"></span>
+                    <span id="statusText" class="text-sm text-gray-500">加载中...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 传感器卡片区域 -->
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-5">
+            <!-- 室外温度 -->
+            <div class="property-card card-glass p-4 cursor-pointer"
+                 data-identifier="out_temperature" data-name="室外温度" data-unit="℃" data-color="#3b82f6">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-blue-400">
+                        <i class="fa fa-thermometer-half text-blue-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">室外温度</h3>
+                </div>
+                <div class="text-2xl font-bold text-gray-100">
+                    <span id="out_temperature">--</span>
+                    <span class="text-sm font-normal text-gray-500">℃</span>
+                </div>
+            </div>
+
+            <!-- 室外湿度 -->
+            <div class="property-card card-glass p-4 cursor-pointer"
+                 data-identifier="out_humidity" data-name="室外湿度" data-unit="%" data-color="#22c55e">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-green-400">
+                        <i class="fa fa-tint text-green-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">室外湿度</h3>
+                </div>
+                <div class="text-2xl font-bold text-gray-100">
+                    <span id="out_humidity">--</span>
+                    <span class="text-sm font-normal text-gray-500">%</span>
+                </div>
+            </div>
+
+            <!-- 光照强度 -->
+            <div class="property-card card-glass p-4 cursor-pointer"
+                 data-identifier="brightness" data-name="光照强度" data-unit="lux" data-color="#f97316">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-orange-400">
+                        <i class="fa fa-sun-o text-orange-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">光照强度</h3>
+                </div>
+                <div class="text-2xl font-bold text-gray-100">
+                    <span id="brightness">--</span>
+                    <span class="text-sm font-normal text-gray-500">lux</span>
+                </div>
+            </div>
+
+            <!-- 室内温度 -->
+            <div class="property-card card-glass p-4 cursor-pointer"
+                 data-identifier="in_temperature" data-name="室内温度" data-unit="℃" data-color="#6366f1">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-indigo-400">
+                        <i class="fa fa-home text-indigo-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">室内温度</h3>
+                </div>
+                <div class="text-2xl font-bold text-gray-100">
+                    <span id="in_temperature">--</span>
+                    <span class="text-sm font-normal text-gray-500">℃</span>
+                </div>
+            </div>
+
+            <!-- 室内湿度 -->
+            <div class="property-card card-glass p-4 cursor-pointer"
+                 data-identifier="in_humidity" data-name="室内湿度" data-unit="%" data-color="#14b8a6">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-teal-400">
+                        <i class="fa fa-tint text-teal-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">室内湿度</h3>
+                </div>
+                <div class="text-2xl font-bold text-gray-100">
+                    <span id="in_humidity">--</span>
+                    <span class="text-sm font-normal text-gray-500">%</span>
+                </div>
+            </div>
+
+            <!-- 燃气报警 -->
+            <div class="property-card card-glass p-4"
+                 data-identifier="gas_alarm" data-name="燃气报警" data-unit="" data-color="#ef4444">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-red-400">
+                        <i class="fa fa-exclamation-triangle text-red-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">燃气报警</h3>
+                </div>
+                <div class="text-2xl font-bold" id="gas_alarm">--</div>
+            </div>
+
+            <!-- 人体存在 -->
+            <div class="property-card card-glass p-4"
+                 data-identifier="presence" data-name="人体存在" data-unit="" data-color="#8b5cf6">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-violet-400">
+                        <i class="fa fa-user text-violet-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">人体存在</h3>
+                </div>
+                <div class="text-2xl font-bold" id="presence">--</div>
+            </div>
+
+            <!-- 运行模式 -->
+            <div class="card-glass p-4">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-amber-400">
+                        <i class="fa fa-cog text-amber-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">运行模式</h3>
+                </div>
+                <div class="text-2xl font-bold" id="auto_mode">--</div>
+            </div>
+
+            <!-- 空调状态 -->
+            <div class="card-glass p-4">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-sky-400">
+                        <i class="fa fa-snowflake-o text-sky-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">空调状态</h3>
+                </div>
+                <div class="text-2xl font-bold" id="ac_mode">--</div>
+            </div>
+
+            <!-- 加湿/除湿状态 -->
+            <div class="card-glass p-4">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="icon-box text-emerald-400">
+                        <i class="fa fa-tint text-emerald-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-gray-300">加湿/除湿</h3>
+                </div>
+                <div class="text-2xl font-bold" id="humi_mode">--</div>
+            </div>
+        </div>
+
+        <!-- 控制区域 -->
+        <div class="card-glass p-5 mb-5">
+            <h3 class="text-base font-bold text-gray-200 mb-4 flex items-center gap-2">
+                <i class="fa fa-gamepad text-blue-400"></i> 设备控制
+            </h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <!-- 窗户控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">窗户 <span id="window_angle" class="text-gray-300 font-semibold">--°</span></p>
+                    <div class="flex gap-2">
+                        <button onclick="btnClick('window',1,'window_state',true)" data-btn-group="window" data-btn-val="1" class="control-btn flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-arrow-up mr-1"></i>开
+                        </button>
+                        <button onclick="btnClick('window',0,'window_state',false)" data-btn-group="window" data-btn-val="0" class="control-btn flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-arrow-down mr-1"></i>关
+                        </button>
+                    </div>
+                </div>
+                <!-- 风扇控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">风扇</p>
+                    <div class="flex gap-2">
+                        <button onclick="btnClick('fan',1,'fan_state',true)" data-btn-group="fan" data-btn-val="1" class="control-btn flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-play mr-1"></i>开
+                        </button>
+                        <button onclick="btnClick('fan',0,'fan_state',false)" data-btn-group="fan" data-btn-val="0" class="control-btn flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-stop mr-1"></i>关
+                        </button>
+                    </div>
+                </div>
+                <!-- 蜂鸣器控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">蜂鸣器</p>
+                    <div class="flex gap-2">
+                        <button onclick="btnClick('buzzer',1,'buzzer_state',true)" data-btn-group="buzzer" data-btn-val="1" class="control-btn flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-volume-up mr-1"></i>开
+                        </button>
+                        <button onclick="btnClick('buzzer',0,'buzzer_state',false)" data-btn-group="buzzer" data-btn-val="0" class="control-btn flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-volume-off mr-1"></i>关
+                        </button>
+                    </div>
+                </div>
+                <!-- 模式控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">模式切换</p>
+                    <div class="flex gap-2">
+                        <button onclick="btnClick('auto',1,'auto_mode',true)" data-btn-group="auto" data-btn-val="1" class="control-btn flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-refresh mr-1"></i>自动
+                        </button>
+                        <button onclick="btnClick('auto',0,'auto_mode',false)" data-btn-group="auto" data-btn-val="0" class="control-btn flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium py-2 rounded-lg">
+                            <i class="fa fa-hand-paper-o mr-1"></i>手动
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <!-- 第二行控制按钮 -->
+            <div class="grid grid-cols-2 gap-3 mt-3">
+                <!-- 空调控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">空调</p>
+                    <div class="grid grid-cols-4 gap-1">
+                        <button onclick="btnClick('ac',0,'ac_mode',0)" data-btn-group="ac" data-btn-val="0" class="control-btn bg-gray-400 hover:bg-gray-500 text-white text-xs py-2 rounded-lg">关</button>
+                        <button onclick="btnClick('ac',1,'ac_mode',1)" data-btn-group="ac" data-btn-val="1" class="control-btn bg-blue-500 hover:bg-blue-600 text-white text-xs py-2 rounded-lg">制冷</button>
+                        <button onclick="btnClick('ac',2,'ac_mode',2)" data-btn-group="ac" data-btn-val="2" class="control-btn bg-red-500 hover:bg-red-600 text-white text-xs py-2 rounded-lg">制热</button>
+                        <button onclick="btnClick('ac',3,'ac_mode',3)" data-btn-group="ac" data-btn-val="3" class="control-btn bg-green-500 hover:bg-green-600 text-white text-xs py-2 rounded-lg">自动</button>
+                    </div>
+                </div>
+                <!-- 加湿/除湿控制 -->
+                <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.03)">
+                    <p class="text-xs text-gray-400 mb-2 text-center">加湿/除湿</p>
+                    <div class="grid grid-cols-4 gap-1">
+                        <button onclick="btnClick('humi',0,'humi_mode',0)" data-btn-group="humi" data-btn-val="0" class="control-btn bg-gray-400 hover:bg-gray-500 text-white text-xs py-2 rounded-lg">关</button>
+                        <button onclick="btnClick('humi',1,'humi_mode',1)" data-btn-group="humi" data-btn-val="1" class="control-btn bg-emerald-500 hover:bg-emerald-600 text-white text-xs py-2 rounded-lg">加湿</button>
+                        <button onclick="btnClick('humi',2,'humi_mode',2)" data-btn-group="humi" data-btn-val="2" class="control-btn bg-yellow-500 hover:bg-yellow-600 text-white text-xs py-2 rounded-lg">除湿</button>
+                        <button onclick="btnClick('humi',3,'humi_mode',3)" data-btn-group="humi" data-btn-val="3" class="control-btn bg-green-500 hover:bg-green-600 text-white text-xs py-2 rounded-lg">自动</button>
+                    </div>
+                </div>
+            </div>
+            <p id="controlTip" class="text-sm text-green-600 mt-3 text-center"></p>
+        </div>
+
+        <!-- 目标温度设置 -->
+        <div class="card-glass p-5 mb-5">
+            <h3 class="text-base font-bold text-gray-200 mb-4 flex items-center gap-2">
+                <i class="fa fa-thermometer-half text-orange-400"></i> 目标温度
+            </h3>
+            <div class="flex items-center justify-between mb-3">
+                <span class="text-sm text-gray-300">启用温度预设</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="targetTempSwitch" class="sr-only peer" onchange="toggleTargetTemp()">
+                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                </label>
+            </div>
+            <div class="flex justify-center">
+                <canvas id="tempDial" width="200" height="200" class="cursor-pointer" style="opacity:0.5;pointer-events:none;transition:opacity 0.3s"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 text-center mt-2">拖拽旋钮 · 范围 16~40°C · 步长 0.5°C</p>
+        </div>
+
+        <!-- 目标湿度设置 -->
+        <div class="card-glass p-5 mb-5">
+            <h3 class="text-base font-bold text-gray-200 mb-4 flex items-center gap-2">
+                <i class="fa fa-tint text-purple-500"></i> 目标湿度
+            </h3>
+            <div class="flex items-center justify-between mb-3">
+                <span class="text-sm text-gray-300">启用湿度预设</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="targetHumiSwitch" class="sr-only peer" onchange="toggleTargetHumi()">
+                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+                </label>
+            </div>
+            <div class="flex justify-center">
+                <canvas id="humiDial" width="200" height="200" class="cursor-pointer" style="opacity:0.5;pointer-events:none;transition:opacity 0.3s"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 text-center mt-2">拖拽旋钮 · 范围 20~90% · 步长 5%</p>
+        </div>
+
+        <!-- 定时计划设置 -->
+        <div class="card-glass p-5 mb-5">
+            <h3 class="text-base font-bold text-gray-200 mb-4 flex items-center gap-2">
+                <i class="fa fa-clock-o text-purple-500"></i> 定时计划
+            </h3>
+            <div class="flex items-center justify-between mb-4">
+                <span class="text-sm text-gray-300">启用定时自动切换</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="scheduleEnable" class="sr-only peer" onchange="updateSchedule()">
+                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+                </label>
+            </div>
+            <div id="schedulePeriods" class="space-y-2 mb-3">
+                <!-- 时间段由 JS 动态生成 -->
+            </div>
+            <div class="flex gap-2">
+                <button onclick="addPeriod()" class="control-btn flex-1 bg-purple-500 hover:bg-purple-600 text-white text-sm py-2 rounded-lg">
+                    <i class="fa fa-plus mr-1"></i> 添加时间段
+                </button>
+                <button onclick="saveSchedule()" class="control-btn flex-1 bg-green-500 hover:bg-green-600 text-white text-sm py-2 rounded-lg">
+                    <i class="fa fa-check mr-1"></i> 保存
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 text-center mt-2">在设定时间段内自动切换为自动模式，时间段外切换为手动模式</p>
+        </div>
+
+        <p class="text-center text-xs text-gray-500 mb-4">数据每 2 秒自动刷新 · 点击传感器卡片查看历史</p>
+    </div>
+
+    <!-- 历史数据模态框 -->
+    <div id="historyModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-2xl shadow-xl w-[92%] md:w-[80%] max-w-[800px] max-h-[85vh] overflow-auto">
+            <div class="p-5 border-b flex justify-between items-center">
+                <h3 id="modalTitle" class="text-lg font-bold text-gray-100">历史数据</h3>
+                <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+                    <button id="tabToday" class="px-3 py-1.5 text-sm rounded-md bg-white shadow font-medium text-blue-600" onclick="switchHistoryTab('today')">当日</button>
+                    <button id="tab3day" class="px-3 py-1.5 text-sm rounded-md text-gray-400 hover:text-gray-200" onclick="switchHistoryTab('3days')">近三日</button>
+                </div>
+                <button id="closeModal" class="text-gray-500 hover:text-gray-300 text-2xl leading-none">&times;</button>
+            </div>
+            <div class="p-5">
+                <div id="historyChart" style="width:100%;height:380px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* ==================== 配置（请替换为你自己的 Token） ==================== */
+        const config = {
+            token: "version=2018-10-31&res=products%2F8Fph2Xgid0%2Fdevices%2FAQMV2&et=1812214000&method=md5&sign=qS7KXVoPlPwMgEn7Ijh%2F6A%3D%3D",
+            productId: "8Fph2Xgid0",
+            deviceName: "AQMV2",
+            api: {
+                deviceDetail: "https://iot-api.heclouds.com/device/detail",
+                getProperty:   "https://iot-api.heclouds.com/thingmodel/query-device-property",
+                setProperty:   "https://iot-api.heclouds.com/thingmodel/set-device-property",
+                getHistory:    "https://iot-api.heclouds.com/thingmodel/query-device-property-history"
+            }
+        };
+
+        let targetTemp = 26.0;
+        let schedulePeriods = [];
+        let chartInstance = null;
+
+        /* ==================== 目标温度旋钮 ==================== */
+        const TEMP_MIN = 16, TEMP_MAX = 40, TEMP_STEP = 0.5;
+        let tempDialDragging = false;
+        let tempDialRaf = null;    /* RAF 限流 */
+
+        /* 16→下左(150°)  28→顶(270°)  40→下右(30°=390°)  Canvas: 0=右, 顺时针+ */
+        function tempToCanvasAngle(t) { return ((t - 16) / 24 * 240 + 150) * Math.PI / 180; }
+        function canvasAngleToTemp(a) {
+            let deg = a * 180 / Math.PI;
+            while (deg < 0) deg += 360;
+            /* 钳制到弧线范围 [150°, 390°] */
+            if (deg > 30 && deg < 150) deg = deg < 90 ? 30 : 150;
+            if (deg <= 30) deg += 360;  /* 归一化到 [150°, 390°] */
+            let t = (deg - 150) / 240 * 24 + 16;
+            t = Math.round(t * 2) / 2;
+            if (t < 16) t = 16; if (t > 40) t = 40;
+            return t;
+        }
+
+        function drawDial() {
+            const c = document.getElementById("tempDial");
+            const dpr = window.devicePixelRatio || 1;
+            const w = 200, h = 200;
+            c.width = w * dpr; c.height = h * dpr;
+            c.style.width = w + "px"; c.style.height = h + "px";
+            const ctx = c.getContext("2d");
+            ctx.scale(dpr, dpr);
+            const cy = h / 2, cx = w / 2, r = 75;
+            ctx.clearRect(0, 0, w, h);
+            /* 背景弧（150°→390° 即 30°） */
+            ctx.beginPath(); ctx.arc(cx, cy, r, 150*Math.PI/180, 30*Math.PI/180); ctx.strokeStyle="rgba(255,255,255,0.12)"; ctx.lineWidth=6; ctx.stroke();
+            /* 值弧（从起点到当前角度） */
+            const a = tempToCanvasAngle(targetTemp);
+            ctx.beginPath(); ctx.arc(cx, cy, r, 150*Math.PI/180, a); ctx.strokeStyle = targetTemp<=26?"#3b82f6":(targetTemp>32?"#ef4444":"#f97316"); ctx.lineWidth=6; ctx.lineCap="round"; ctx.stroke();
+            /* 指针 */
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a)*r*0.75, cy + Math.sin(a)*r*0.75); ctx.strokeStyle="rgba(255,255,255,0.75)"; ctx.lineWidth=3; ctx.lineCap="round"; ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fillStyle="rgba(255,255,255,0.8)"; ctx.fill();
+            /* 温度数值 */
+            ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.font="bold 36px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+            ctx.fillText(targetTemp.toFixed(1), cx, cy-30);
+            ctx.font="16px sans-serif"; ctx.fillStyle="rgba(255,255,255,0.4)"; ctx.textBaseline="top";
+            ctx.fillText("°C", cx+48, cy-48);
+            /* 范围标注 */
+            ctx.font="11px sans-serif"; ctx.fillStyle="rgba(255,255,255,0.35)"; ctx.textAlign="center";
+            ctx.fillText("16", cx - r*0.82, cy + r*0.35); ctx.fillText("40", cx + r*0.82, cy + r*0.35);
+        }
+
+        function setDialEnabled(on) {
+            const c = document.getElementById("tempDial");
+            c.style.opacity = on ? "1" : "0.5";
+            c.style.pointerEvents = on ? "auto" : "none";
+            drawDial();
+        }
+
+        function toggleTargetTemp() {
+            const on = document.getElementById("targetTempSwitch").checked;
+            setDialEnabled(on);
+            if (on) {
+                if (targetTemp < 16 || targetTemp > 40) targetTemp = 26.0;
+                setProperty("target_temp", targetTemp);
+                setProperty("ac_mode", 3);
+            } else {
+                targetTemp = 26.0;
+                setProperty("target_temp", targetTemp);
+            }
+            drawDial();
+        }
+
+        /* 旋钮事件 */
+        document.addEventListener("DOMContentLoaded", () => {
+            const c = document.getElementById("tempDial");
+            const getCanvasAngle = (ex, ey) => {
+                const r = c.getBoundingClientRect();
+                const dx = ex - (r.left + r.width/2), dy = ey - (r.top + r.height/2);
+                return Math.atan2(dy, dx);  /* atan2: 0=右, CCW+ → 取反后匹配 Canvas */
+            };
+            c.addEventListener("mousedown", e => { if(document.getElementById("targetTempSwitch").checked) tempDialDragging=true; });
+            c.addEventListener("touchstart", e => { if(document.getElementById("targetTempSwitch").checked){tempDialDragging=true; e.preventDefault();} },{passive:false});
+            window.addEventListener("mousemove", e => {
+                if (!tempDialDragging) return;
+                targetTemp = canvasAngleToTemp(getCanvasAngle(e.clientX, e.clientY));
+                if (!tempDialRaf) tempDialRaf = requestAnimationFrame(() => { drawDial(); tempDialRaf = null; });
+            });
+            window.addEventListener("touchmove", e => {
+                if (!tempDialDragging) return;
+                const t = e.touches[0];
+                targetTemp = canvasAngleToTemp(getCanvasAngle(t.clientX, t.clientY));
+                if (!tempDialRaf) tempDialRaf = requestAnimationFrame(() => { drawDial(); tempDialRaf = null; });
+            },{passive:false});
+            window.addEventListener("mouseup",   () => { if(tempDialDragging){tempDialDragging=false; setProperty("target_temp",targetTemp);} });
+            window.addEventListener("touchend",  () => { if(tempDialDragging){tempDialDragging=false; setProperty("target_temp",targetTemp);} });
+            drawDial();
+        });
+
+        /* ==================== 目标湿度旋钮 ==================== */
+        const HUMI_MIN = 20, HUMI_MAX = 90, HUMI_STEP = 5;
+        let targetHumi = 55;
+        let humiDialDragging = false;
+        let humiDialRaf = null;    /* RAF 限流 */
+
+        /* 20→下左(150°)  55→顶(270°)  90→下右(30°=390°)  Canvas: 0=右, 顺时针+ */
+        function humiToCanvasAngle(h) { return ((h - 20) / 70 * 240 + 150) * Math.PI / 180; }
+        function canvasAngleToHumi(a) {
+            let deg = a * 180 / Math.PI;
+            while (deg < 0) deg += 360;
+            if (deg > 30 && deg < 150) deg = deg < 90 ? 30 : 150;
+            if (deg <= 30) deg += 360;
+            let h = (deg - 150) / 240 * 70 + 20;
+            h = Math.round(h / 5) * 5;
+            if (h < 20) h = 20; if (h > 90) h = 90;
+            return h;
+        }
+
+        function drawHumiDial() {
+            const c = document.getElementById("humiDial");
+            const dpr = window.devicePixelRatio || 1;
+            const w = 200, h = 200;
+            c.width = w * dpr; c.height = h * dpr;
+            c.style.width = w + "px"; c.style.height = h + "px";
+            const ctx = c.getContext("2d");
+            ctx.scale(dpr, dpr);
+            const cy = h / 2, cx = w / 2, r = 75;
+            ctx.clearRect(0, 0, w, h);
+            /* 背景弧 */
+            ctx.beginPath(); ctx.arc(cx, cy, r, 150*Math.PI/180, 30*Math.PI/180); ctx.strokeStyle="rgba(255,255,255,0.12)"; ctx.lineWidth=6; ctx.stroke();
+            /* 值弧 */
+            const a = humiToCanvasAngle(targetHumi);
+            ctx.beginPath(); ctx.arc(cx, cy, r, 150*Math.PI/180, a); ctx.strokeStyle = targetHumi<=40?"#06b6d4":(targetHumi>70?"#a855f7":"#22c55e"); ctx.lineWidth=6; ctx.lineCap="round"; ctx.stroke();
+            /* 指针 */
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a)*r*0.75, cy + Math.sin(a)*r*0.75); ctx.strokeStyle="rgba(255,255,255,0.75)"; ctx.lineWidth=3; ctx.lineCap="round"; ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fillStyle="rgba(255,255,255,0.8)"; ctx.fill();
+            /* 数值 */
+            ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.font="bold 36px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+            ctx.fillText(targetHumi, cx, cy-30);
+            ctx.font="16px sans-serif"; ctx.fillStyle="rgba(255,255,255,0.4)"; ctx.textBaseline="top";
+            ctx.fillText("%", cx+36, cy-48);
+            /* 范围标注 */
+            ctx.font="11px sans-serif"; ctx.fillStyle="rgba(255,255,255,0.35)"; ctx.textAlign="center";
+            ctx.fillText("20", cx - r*0.82, cy + r*0.35); ctx.fillText("90", cx + r*0.82, cy + r*0.35);
+        }
+
+        function setHumiDialEnabled(on) {
+            const c = document.getElementById("humiDial");
+            c.style.opacity = on ? "1" : "0.5";
+            c.style.pointerEvents = on ? "auto" : "none";
+            drawHumiDial();
+        }
+
+        function toggleTargetHumi() {
+            const on = document.getElementById("targetHumiSwitch").checked;
+            setHumiDialEnabled(on);
+            if (on) {
+                if (targetHumi < 20 || targetHumi > 90) targetHumi = 55;
+                setProperty("target_humi", targetHumi);
+                setProperty("humi_mode", 3);
+            } else {
+                targetHumi = 55;
+                setProperty("target_humi", targetHumi);
+            }
+            drawHumiDial();
+        }
+
+        /* 湿度旋钮事件 */
+        document.addEventListener("DOMContentLoaded", () => {
+            const hc = document.getElementById("humiDial");
+            const getHumiCanvasAngle = (ex, ey) => {
+                const r = hc.getBoundingClientRect();
+                const dx = ex - (r.left + r.width/2), dy = ey - (r.top + r.height/2);
+                return Math.atan2(dy, dx);
+            };
+            hc.addEventListener("mousedown", e => { if(document.getElementById("targetHumiSwitch").checked) humiDialDragging=true; });
+            hc.addEventListener("touchstart", e => { if(document.getElementById("targetHumiSwitch").checked){humiDialDragging=true; e.preventDefault();} },{passive:false});
+            window.addEventListener("mousemove", e => {
+                if (!humiDialDragging) return;
+                targetHumi = canvasAngleToHumi(getHumiCanvasAngle(e.clientX, e.clientY));
+                if (!humiDialRaf) humiDialRaf = requestAnimationFrame(() => { drawHumiDial(); humiDialRaf = null; });
+            });
+            window.addEventListener("touchmove", e => {
+                if (!humiDialDragging) return;
+                const t = e.touches[0];
+                targetHumi = canvasAngleToHumi(getHumiCanvasAngle(t.clientX, t.clientY));
+                if (!humiDialRaf) humiDialRaf = requestAnimationFrame(() => { drawHumiDial(); humiDialRaf = null; });
+            },{passive:false});
+            window.addEventListener("mouseup",   () => { if(humiDialDragging){humiDialDragging=false; setProperty("target_humi",targetHumi);} });
+            window.addEventListener("touchend",  () => { if(humiDialDragging){humiDialDragging=false; setProperty("target_humi",targetHumi);} });
+            drawHumiDial();
+        });
+
+        /* ==================== 定时计划管理 ==================== */
+        function addPeriod() {
+            if (schedulePeriods.length >= 4) { alert("最多支持 4 个时间段"); return; }
+            schedulePeriods.push({ start: "07:00", end: "09:00", mode: "system", action: "" });
+            renderPeriods();
+        }
+
+        function removePeriod(idx) {
+            schedulePeriods.splice(idx, 1);
+            renderPeriods();
+        }
+
+        function renderPeriods() {
+            const container = document.getElementById("schedulePeriods");
+            if (schedulePeriods.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-500 text-center">暂无时间段，点击下方添加</p>';
+                return;
+            }
+            container.innerHTML = schedulePeriods.map((p, i) => `
+                <div class="rounded-lg p-3 space-y-2" style="background:rgba(255,255,255,0.03)">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-400 w-6">${i+1}</span>
+                        <span class="text-xs text-gray-400">时间</span>
+                        <input type="time" value="${p.start}" onchange="schedulePeriods[${i}].start=this.value"
+                            class="border rounded px-2 py-1 text-sm flex-1">
+                        <span class="text-gray-500">-</span>
+                        <input type="time" value="${p.end}" onchange="schedulePeriods[${i}].end=this.value"
+                            class="border rounded px-2 py-1 text-sm flex-1">
+                        <button onclick="removePeriod(${i})" class="text-red-400 hover:text-red-600 px-2">
+                            <i class="fa fa-trash"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-2 ml-14">
+                        <span class="text-xs text-gray-400">模式</span>
+                        <select onchange="schedulePeriods[${i}].mode=this.value;schedulePeriods[${i}].action='';renderPeriods();"
+                            class="border rounded px-2 py-1 text-sm">
+                            <option value="system" ${p.mode==='system'?'selected':''}>系统自动</option>
+                            <option value="temp" ${p.mode==='temp'?'selected':''}>温度控制</option>
+                            <option value="humi" ${p.mode==='humi'?'selected':''}>湿度控制</option>
+                        </select>
+                        ${p.mode==='temp' ? `
+                        <span class="text-xs text-gray-400">操作</span>
+                        <select onchange="schedulePeriods[${i}].action=this.value"
+                            class="border rounded px-2 py-1 text-sm">
+                            <option value="cool" ${p.action==='cool'?'selected':''}>制冷</option>
+                            <option value="heat" ${p.action==='heat'?'selected':''}>制热</option>
+                        </select>
+                        ` : p.mode==='humi' ? `
+                        <span class="text-xs text-gray-400">操作</span>
+                        <select onchange="schedulePeriods[${i}].action=this.value"
+                            class="border rounded px-2 py-1 text-sm">
+                            <option value="humidify" ${p.action==='humidify'?'selected':''}>加湿</option>
+                            <option value="dehumidify" ${p.action==='dehumidify'?'selected':''}>除湿</option>
+                        </select>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join("");
+        }
+
+        function updateSchedule() {
+            /* 开关状态变化时的即时反馈 */
+        }
+
+        function saveSchedule() {
+            const enable = document.getElementById("scheduleEnable").checked;
+            const schedule = {
+                enable: enable,
+                periods: schedulePeriods
+            };
+            setProperty("schedule", JSON.stringify(schedule));
+            document.getElementById("controlTip").textContent = enable
+                ? `定时计划已启用（${schedulePeriods.length}个时间段）`
+                : "定时计划已禁用";
+            setTimeout(() => { document.getElementById("controlTip").textContent = ""; }, 3000);
+        }
+
+        /* 页面初始化时渲染时间段 */
+        renderPeriods();
+
+        /* ==================== 获取物模型属性（增强版） ==================== */
+        const _origGetDeviceProperties = getDeviceProperties;
+
+        /* ==================== 获取设备在线状态 ==================== */
+        async function getDeviceStatus() {
+            try {
+                const res = await fetch(`${config.api.deviceDetail}?product_id=${config.productId}&device_name=${config.deviceName}`, {
+                    headers: { "authorization": config.token }
+                });
+                const data = await res.json();
+                if (data.code === 0) {
+                    const dot  = document.getElementById("statusDot");
+                    const text = document.getElementById("statusText");
+                    if (data.data.status === 1) {
+                        dot.className  = "w-3 h-3 rounded-full bg-green-500 pulse-green";
+                        text.textContent = "在线";
+                        text.className = "text-sm text-green-600";
+                    } else {
+                        dot.className  = "w-3 h-3 rounded-full bg-gray-400";
+                        text.textContent = "离线";
+                        text.className = "text-sm text-gray-400";
+                    }
+                }
+            } catch (e) { console.error("获取设备状态失败", e); }
+        }
+
+        /* ==================== 获取物模型属性 ==================== */
+        async function getDeviceProperties() {
+            try {
+                const res = await fetch(`${config.api.getProperty}?product_id=${config.productId}&device_name=${config.deviceName}`, {
+                    headers: { "authorization": config.token }
+                });
+                const data = await res.json();
+                if (data.code !== 0) { console.error("获取属性失败", data.msg); return; }
+                const list = data.data;
+
+                const get = id => list.find(i => i.identifier === id);
+
+                /* 传感器数值（保留1位小数） */
+                setNum("out_temperature", get("out_temperature")?.value);
+                setNum("out_humidity",    get("out_humidity")?.value);
+                setNum("brightness",      get("brightness")?.value);
+                setNum("in_temperature",  get("in_temperature")?.value);
+                setNum("in_humidity",     get("in_humidity")?.value);
+
+                /* 窗户开度 */
+                const winAngle = parseInt(get("window_angle")?.value);
+                document.getElementById("window_angle").textContent = isNaN(winAngle)
+                    ? "--°" : winAngle + "°";
+                const winOpen = toBool(get("window_state")?.value);
+                setActiveButton("window", winOpen ? 1 : 0, true);
+
+                /* 风扇 */
+                const fanOn = toBool(get("fan_state")?.value);
+                setActiveButton("fan", fanOn ? 1 : 0, true);
+
+                /* 蜂鸣器 */
+                const buzzOn = toBool(get("buzzer_state")?.value);
+                setActiveButton("buzzer", buzzOn ? 1 : 0, true);
+
+                /* 布尔状态 */
+                const gas = toBool(get("gas_alarm")?.value);
+                document.getElementById("gas_alarm").innerHTML = gas
+                    ? '<span class="text-red-400">⚠ 报警中</span>'
+                    : '<span class="text-green-400">正常</span>';
+
+                const pres = toBool(get("presence")?.value);
+                document.getElementById("presence").innerHTML = pres
+                    ? '<span class="text-blue-400">有人</span>'
+                    : '<span class="text-gray-500">无人</span>';
+
+                const auto = toBool(get("auto_mode")?.value);
+                setActiveButton("auto", auto ? 1 : 0, true);
+                document.getElementById("auto_mode").innerHTML = auto
+                    ? '<span class="text-blue-400">自动</span>'
+                    : '<span class="text-amber-400">手动</span>';
+
+                /* 空调状态 */
+                const acVal = parseInt(get("ac_mode")?.value);
+                setActiveButton("ac", acVal, true);
+                const acMap = { 0: "关闭", 1: "制冷", 2: "制热", 3: "自动" };
+                const acColor = { 0: "text-gray-500", 1: "text-blue-400", 2: "text-red-400", 3: "text-green-400" };
+                document.getElementById("ac_mode").innerHTML = acVal in acMap
+                    ? `<span class="${acColor[acVal]}">${acMap[acVal]}</span>`
+                    : '<span class="text-gray-500">--</span>';
+
+                /* 加湿/除湿状态 */
+                const humiVal = parseInt(get("humi_mode")?.value);
+                setActiveButton("humi", humiVal, true);
+                const humiMap = { 0: "关闭", 1: "加湿", 2: "除湿", 3: "自动" };
+                const humiColor = { 0: "text-gray-500", 1: "text-emerald-400", 2: "text-yellow-500", 3: "text-green-400" };
+                document.getElementById("humi_mode").innerHTML = humiVal in humiMap
+                    ? `<span class="${humiColor[humiVal]}">${humiMap[humiVal]}</span>`
+                    : '<span class="text-gray-500">--</span>';
+
+                /* 目标温度（拖动中跳过，避免弹回） */
+                if (!tempDialDragging) {
+                    const ttVal = parseFloat(get("target_temp")?.value);
+                    if (!isNaN(ttVal) && ttVal > 0) {
+                        targetTemp = ttVal;
+                        drawDial();
+                    }
+                }
+
+                /* 目标湿度（拖动中跳过，避免弹回） */
+                if (!humiDialDragging) {
+                    const thVal = parseFloat(get("target_humi")?.value);
+                    if (!isNaN(thVal) && thVal > 0) {
+                        targetHumi = thVal;
+                        drawHumiDial();
+                    }
+                }
+            } catch (e) { console.error("获取属性失败", e); }
+        }
+
+        /* 高亮当前选中的按钮（含防回弹：点击后 5 秒内跳过轮询覆盖） */
+        let lastBtnClickTime = { ac: 0, humi: 0 };
+        function setActiveButton(group, val, fromPoll) {
+            if (fromPoll) {
+                const elapsed = Date.now() - (lastBtnClickTime[group] || 0);
+                if (elapsed < 5000) return;  /* 点击后 5 秒内不覆盖 */
+            }
+            document.querySelectorAll(`[data-btn-group="${group}"]`).forEach(btn => {
+                if (parseInt(btn.dataset.btnVal) === val)
+                    btn.classList.add("control-btn-active");
+                else
+                    btn.classList.remove("control-btn-active");
+            });
+        }
+
+        /* 布尔值兼容：OneNET API 返回的 "true"/"false" 是字符串，需要转换 */
+        function toBool(val) {
+            if (val === true || val === "true" || val === 1) return true;
+            return false;
+        }
+
+        function setNum(id, val) {
+            if (val === undefined || val === null) return;
+            document.getElementById(id).textContent = parseFloat(val).toFixed(1);
+        }
+
+        /* 统一按钮点击处理（记录时间 + 高亮 + 下发指令） */
+        function btnClick(group, val, prop, propVal) {
+            lastBtnClickTime[group] = Date.now();
+            setActiveButton(group, val);
+            if (prop) setProperty(prop, propVal);
+        }
+
+        /* ==================== 远程下发属性 ==================== */
+        function setProperty(identifier, value) {
+            document.getElementById("controlTip").textContent = "已执行";
+            setTimeout(() => { document.getElementById("controlTip").textContent = ""; }, 2000);
+
+            fetch(config.api.setProperty, {
+                method: "POST",
+                headers: {
+                    "authorization": config.token,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    product_id: config.productId,
+                    device_name: config.deviceName,
+                    params: { [identifier]: value }
+                })
+            })
+            .then(r => r.json())
+            .then(() => { setTimeout(getDeviceProperties, 1500); })
+            .catch(e => { console.error("下发失败", e); });
+        }
+
+        /* ==================== 历史数据图表 ==================== */
+        let historyIdentifier = null;
+        let historyName = null;
+        let historyUnit = null;
+        let historyColor = null;
+
+        async function switchHistoryTab(range) {
+            /* 更新 tab 样式 */
+            document.getElementById("tabToday").className = range === "today"
+                ? "px-3 py-1.5 text-sm rounded-md bg-white shadow font-medium text-blue-600"
+                : "px-3 py-1.5 text-sm rounded-md text-gray-400 hover:text-gray-200";
+            document.getElementById("tab3day").className = range === "3days"
+                ? "px-3 py-1.5 text-sm rounded-md bg-white shadow font-medium text-blue-600"
+                : "px-3 py-1.5 text-sm rounded-md text-gray-400 hover:text-gray-200";
+            /* 重新加载数据 */
+            fetchHistoryData(historyIdentifier, historyName, historyUnit, historyColor, range);
+        }
+
+        function openHistoryModal(identifier, name, unit, color) {
+            historyIdentifier = identifier;
+            historyName = name;
+            historyUnit = unit;
+            historyColor = color;
+            const modal = document.getElementById("historyModal");
+            document.getElementById("modalTitle").textContent = name + " 历史数据";
+            modal.classList.remove("hidden");
+            /* 默认显示当日 */
+            document.getElementById("tabToday").className = "px-3 py-1.5 text-sm rounded-md bg-white shadow font-medium text-blue-600";
+            document.getElementById("tab3day").className = "px-3 py-1.5 text-sm rounded-md text-gray-400 hover:text-gray-200";
+            fetchHistoryData(identifier, name, unit, color, "today");
+        }
+
+        async function fetchHistoryData(identifier, name, unit, color, range) {
+            if (!chartInstance) chartInstance = echarts.init(document.getElementById("historyChart"));
+            chartInstance.showLoading();
+
+            try {
+                const endTime = Date.now();
+                let startTime;
+                let limit;
+                if (range === "3days") {
+                    startTime = endTime - 3 * 24 * 3600 * 1000;
+                    limit = 300;
+                } else {
+                    /* 当日：从今天 0 点开始 */
+                    const todayStart = new Date();
+                    todayStart.setHours(0, 0, 0, 0);
+                    startTime = todayStart.getTime();
+                    limit = 200;
+                }
+
+                const res = await fetch(
+                    `${config.api.getHistory}?product_id=${config.productId}&device_name=${config.deviceName}` +
+                    `&identifier=${identifier}&start_time=${startTime}&end_time=${endTime}&limit=${limit}`,
+                    { headers: { "authorization": config.token } }
+                );
+                const data = await res.json();
+                if (data.code !== 0) { alert("获取失败：" + data.msg); chartInstance.hideLoading(); return; }
+
+                const list = (data.data.list || []).reverse();
+
+                let chartOption;
+                if (range === "3days") {
+                    /* 近三日：按天聚合为 max / min / avg */
+                    const dayMap = {}; /* key: "MM/DD", value: array of numbers */
+                    list.forEach(i => {
+                        const d = new Date(parseInt(i.time));
+                        const dayKey = (d.getMonth()+1)+"/"+d.getDate();
+                        if (!dayMap[dayKey]) dayMap[dayKey] = [];
+                        dayMap[dayKey].push(parseFloat(i.value));
+                    });
+                    const days = Object.keys(dayMap).sort(); /* 按日期排序 */
+                    const maxVals = days.map(d => Math.max(...dayMap[d]));
+                    const minVals = days.map(d => Math.min(...dayMap[d]));
+                    const avgVals = days.map(d => {
+                        const sum = dayMap[d].reduce((a,b)=>a+b,0);
+                        return parseFloat((sum / dayMap[d].length).toFixed(1));
+                    });
+
+                    chartOption = {
+                        tooltip: { trigger: 'axis' },
+                        legend: { data: ['最高','平均','最低'], bottom:0 },
+                        grid: { left:'3%', right:'4%', bottom:'12%', containLabel:true },
+                        xAxis: { type:'category', data:days },
+                        yAxis: { type:'value', name:unit },
+                        series: [
+                            { name:'最高', type:'line', data:maxVals, smooth:true,
+                              itemStyle:{ color:'#ef4444' }, lineStyle:{ color:'#ef4444' } },
+                            { name:'平均', type:'line', data:avgVals, smooth:true,
+                              itemStyle:{ color:'#3b82f6' }, lineStyle:{ color:'#3b82f6' },
+                              areaStyle:{ color: new echarts.graphic.LinearGradient(0,0,0,1,[
+                                  { offset:0, color:'#3b82f680' }, { offset:1, color:'#3b82f610' }
+                              ])} },
+                            { name:'最低', type:'line', data:minVals, smooth:true,
+                              itemStyle:{ color:'#22c55e' }, lineStyle:{ color:'#22c55e' } }
+                        ]
+                    };
+                } else {
+                    /* 当日：原始数据时序图 */
+                    const times  = list.map(i => {
+                        const d = new Date(parseInt(i.time));
+                        return d.getHours()+":"+String(d.getMinutes()).padStart(2,'0');
+                    });
+                    const values = list.map(i => parseFloat(i.value));
+
+                    chartOption = {
+                        tooltip: { trigger: 'axis' },
+                        grid: { left:'3%', right:'4%', bottom:'3%', containLabel:true },
+                        xAxis: { type:'category', data:times, axisLabel:{ rotate:30 } },
+                        yAxis: { type:'value', name:unit },
+                        series: [{
+                            name:name, type:'line', data:values, smooth:true,
+                            itemStyle:{ color:color },
+                            areaStyle:{ color: new echarts.graphic.LinearGradient(0,0,0,1,[
+                                { offset:0, color:color+'80' },
+                                { offset:1, color:color+'10' }
+                            ])}
+                        }]
+                    };
+                }
+
+                chartInstance.setOption(chartOption, true);
+                chartInstance.hideLoading();
+            } catch (e) {
+                console.error("历史数据获取失败", e);
+                chartInstance.hideLoading();
+            }
+        }
+
+        /* ==================== 页面初始化 ==================== */
+        window.onload = () => {
+            getDeviceStatus();
+            getDeviceProperties();
+
+            setInterval(() => { getDeviceStatus(); getDeviceProperties(); }, 2000);
+
+            /* 传感器卡片点击 → 历史数据 */
+            document.querySelectorAll(".property-card[data-identifier]").forEach(card => {
+                card.addEventListener("click", () => {
+                    const id    = card.dataset.identifier;
+                    const name  = card.dataset.name;
+                    const unit  = card.dataset.unit;
+                    const color = card.dataset.color;
+                    /* 布尔型属性不支持历史图表 */
+                    if (["gas_alarm","presence"].includes(id)) return;
+                    openHistoryModal(id, name, unit, color);
+                });
+            });
+
+            /* 模态框关闭 */
+            document.getElementById("closeModal").addEventListener("click", () => {
+                document.getElementById("historyModal").classList.add("hidden");
+            });
+            document.getElementById("historyModal").addEventListener("click", e => {
+                if (e.target === document.getElementById("historyModal"))
+                    document.getElementById("historyModal").classList.add("hidden");
+            });
+
+            /* 窗口变化时自适应图表 */
+            window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
+        };
+    </script>
+</body>
+</html>
