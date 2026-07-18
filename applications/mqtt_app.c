@@ -70,13 +70,15 @@ static int get_bool_val(cJSON *item, int def)
  */
 static void mqtt_sub_default_callback(MQTTClient *c, MessageData *msg_data)
 {
-    /* 在 payload 末尾添加字符串结束符，方便打印 */
-    *((char *)msg_data->message->payload + msg_data->message->payloadlen) = '\0';
-    LOG_D("sub callback: %.*s %.*s",
+    size_t len = msg_data->message->payloadlen;
+    if (len > 511) len = 511;  /* 安全截断 */
+    char buf[512];
+    memcpy(buf, msg_data->message->payload, len);
+    buf[len] = '\0';
+    LOG_D("sub callback: %.*s %s",
           msg_data->topicName->lenstring.len,
           msg_data->topicName->lenstring.data,
-          msg_data->message->payloadlen,
-          (char *)msg_data->message->payload);
+          buf);
 }
 
 /*
@@ -86,14 +88,26 @@ static void mqtt_sub_default_callback(MQTTClient *c, MessageData *msg_data)
  */
 static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
 {
-    *((char *)msg_data->message->payload + msg_data->message->payloadlen) = '\0';
-    const char *payload = (const char *)msg_data->message->payload;
+    size_t len = msg_data->message->payloadlen;
+    char payload_buf[768];  /* 足够容纳四段定时计划 JSON */
+    if (len > sizeof(payload_buf) - 1)
+    {
+        LOG_E("set cmd: payload too large (%u > %u)", len, sizeof(payload_buf) - 1);
+        mq_publish(ONENET_SET_REPLY_TOPIC,
+            "{\"id\":\"0\",\"code\":413,\"msg\":\"payload too large\"}");
+        return;
+    }
+    memcpy(payload_buf, msg_data->message->payload, len);
+    payload_buf[len] = '\0';
+    const char *payload = payload_buf;
     LOG_I("set cmd: %s", payload);
 
     cJSON *root = cJSON_Parse(payload);
     if (!root)
     {
         LOG_E("set cmd: JSON parse failed");
+        mq_publish(ONENET_SET_REPLY_TOPIC,
+            "{\"id\":\"0\",\"code\":400,\"msg\":\"invalid JSON\"}");
         return;
     }
 
@@ -103,18 +117,38 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
     if (id_item && id_item->valuestring)
         msg_id = id_item->valuestring;
 
-    /* 收到云端命令，蜂鸣器短响一声提示（非阻塞，立即返回） */
-    rt_pin_write(GET_PIN(C, 13), PIN_HIGH);
-    rt_hw_us_delay(50000);  /* 50ms，硬件延时，不阻塞线程 */
-    rt_pin_write(GET_PIN(C, 13), PIN_LOW);
+    /* 收到云端命令，蜂鸣器短响一声提示（50ms，一次性硬件延时，可接受） */
+    rt_pin_write(GET_PIN(B, 0), PIN_HIGH);
+    rt_hw_us_delay(50000);
+    rt_pin_write(GET_PIN(B, 0), PIN_LOW);
 
     cJSON *params = cJSON_GetObjectItem(root, "params");
-    if (params)
+    if (!params || !cJSON_IsObject(params))
     {
-        cJSON *fan = cJSON_GetObjectItem(params, "fan_state");
-        if (fan)
+        LOG_W("set cmd: missing or invalid params");
+        rt_snprintf(reply, sizeof(reply),
+            "{\"id\":\"%s\",\"code\":400,\"msg\":\"missing or invalid params\"}", msg_id);
+        mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+        cJSON_Delete(root);
+        return;
+    }
+
+    /* ===== 安全仲裁：燃气报警时拒绝关闭安全设备 ===== */
+    int gas_alarm = mq5_app_is_alarm();
+
+    cJSON *fan = cJSON_GetObjectItem(params, "fan_state");
+    if (fan)
         {
             int on = get_bool_val(fan, 0);
+            if (!on && gas_alarm)
+            {
+                LOG_W("Remote: Fan OFF rejected (gas alarm active)");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot close fan during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             if (on) { fan_on();  LOG_I("Remote: Fan ON"); }
             else    { fan_off(); LOG_I("Remote: Fan OFF"); }
             fan_manual = 1;
@@ -123,11 +157,16 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
         cJSON *window = cJSON_GetObjectItem(params, "window_state");
         if (window)
         {
-            int open;
-            if (cJSON_IsBool(window))
-                open = cJSON_IsTrue(window) ? 1 : 0;
-            else
-                open = (window->valueint > 0) ? 1 : 0;
+            int open = get_bool_val(window, 0);
+            if (!open && gas_alarm)
+            {
+                LOG_W("Remote: Window CLOSE rejected (gas alarm active)");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot close window during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             if (open) { servo_window_open();  LOG_I("Remote: Window OPEN"); }
             else      { servo_window_close(); LOG_I("Remote: Window CLOSE"); }
             window_manual = 1;
@@ -137,6 +176,15 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
         if (buzzer)
         {
             int on = get_bool_val(buzzer, 0);
+            if (!on && gas_alarm)
+            {
+                LOG_W("Remote: Buzzer OFF rejected (gas alarm active)");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot silence buzzer during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             if (on) { buzzer_on();  LOG_I("Remote: Buzzer ON"); }
             else    { buzzer_off(); LOG_I("Remote: Buzzer OFF"); }
         }
@@ -145,6 +193,15 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
         if (auto_mode)
         {
             int restore = get_bool_val(auto_mode, 0);
+            if (restore && gas_alarm)
+            {
+                LOG_W("Remote: Auto mode rejected (gas alarm active)");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot enable auto during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             if (restore)
             {
                 fan_manual = 0;
@@ -170,40 +227,97 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
         cJSON *ac_mode = cJSON_GetObjectItem(params, "ac_mode");
         if (ac_mode)
         {
-            int mode = ac_mode->valueint;
-            if (mode >= 0 && mode <= 3)
+            if (!cJSON_IsNumber(ac_mode))
             {
-                ac_set_mode((ac_mode_t)mode);
-                if (mode == 3)  /* AC_AUTO: AC 独立自动，不影响操作模式 */
-                    ac_set_manual(0);
-                else
-                    ac_set_manual(1);
-                const char *mode_str[] = {"OFF", "COOL", "HEAT", "AUTO"};
-                LOG_I("Remote: AC mode=%s", mode_str[mode]);
+                LOG_W("Remote: AC mode not a number");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"ac_mode must be a number\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
             }
+            int mode = ac_mode->valueint;
+            if (mode < 0 || mode > 3)
+            {
+                LOG_W("Remote: AC invalid mode=%d", mode);
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"invalid ac_mode: %d\"}", msg_id, mode);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
+            if (mode != 0 && gas_alarm)
+            {
+                LOG_W("Remote: AC mode=%d rejected (gas alarm active)", mode);
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot enable AC during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
+            ac_set_mode((ac_mode_t)mode);
+            if (mode == 3)  /* AC_AUTO: AC 独立自动，不影响操作模式 */
+                ac_set_manual(0);
+            else
+                ac_set_manual(1);
+            const char *mode_str[] = {"OFF", "COOL", "HEAT", "AUTO"};
+            LOG_I("Remote: AC mode=%s", mode_str[mode]);
         }
 
         /* 加湿/除湿远程控制：humi_mode = 0/1/2/3（关/加湿/除湿/自动） */
         cJSON *humi_mode = cJSON_GetObjectItem(params, "humi_mode");
         if (humi_mode)
         {
-            int mode = humi_mode->valueint;
-            if (mode >= 0 && mode <= 3)
+            if (!cJSON_IsNumber(humi_mode))
             {
-                humi_set_mode((humi_mode_t)mode);
-                if (mode == HUMI_AUTO)
-                    humi_set_manual(0);
-                else
-                    humi_set_manual(1);
-                const char *mode_str[] = {"OFF", "HUMIDIFY", "DEHUMIDIFY", "AUTO"};
-                LOG_I("Remote: Humi mode=%s", mode_str[mode]);
+                LOG_W("Remote: Humi mode not a number");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"humi_mode must be a number\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
             }
+            int mode = humi_mode->valueint;
+            if (mode < 0 || mode > 3)
+            {
+                LOG_W("Remote: Humi invalid mode=%d", mode);
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"invalid humi_mode: %d\"}", msg_id, mode);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
+            if (mode != 0 && gas_alarm)
+            {
+                LOG_W("Remote: Humi mode=%d rejected (gas alarm active)", mode);
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":403,\"msg\":\"safety: cannot enable humidifier during gas alarm\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
+            humi_set_mode((humi_mode_t)mode);
+            if (mode == HUMI_AUTO)
+                humi_set_manual(0);
+            else
+                humi_set_manual(1);
+            const char *mode_str[] = {"OFF", "HUMIDIFY", "DEHUMIDIFY", "AUTO"};
+            LOG_I("Remote: Humi mode=%s", mode_str[mode]);
         }
 
         /* 目标温度设置：target_temp = float（16.0~40.0，步长 0.5） */
         cJSON *tt = cJSON_GetObjectItem(params, "target_temp");
         if (tt)
         {
+            if (!cJSON_IsNumber(tt))
+            {
+                LOG_W("Remote: target_temp not a number");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"target_temp must be a number\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             float temp = (float)tt->valuedouble;
             float set = ac_set_target_temp(temp);
             LOG_I("Remote: Target temp=%d.%d C", (int)set, 
@@ -214,6 +328,15 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
         cJSON *th = cJSON_GetObjectItem(params, "target_humi");
         if (th)
         {
+            if (!cJSON_IsNumber(th))
+            {
+                LOG_W("Remote: target_humi not a number");
+                rt_snprintf(reply, sizeof(reply),
+                    "{\"id\":\"%s\",\"code\":400,\"msg\":\"target_humi must be a number\"}", msg_id);
+                mq_publish(ONENET_SET_REPLY_TOPIC, reply);
+                cJSON_Delete(root);
+                return;
+            }
             float humi = (float)th->valuedouble;
             float set = humi_set_target_humi(humi);
             LOG_I("Remote: Target humi=%d%%", (int)set);
@@ -248,7 +371,6 @@ static void mqtt_sub_set_callback(MQTTClient *c, MessageData *msg_data)
             if (need_free && schedule_obj)
                 cJSON_Delete(schedule_obj);
         }
-    }
 
     rt_snprintf(reply, sizeof(reply),
         "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\"}", msg_id);
@@ -293,7 +415,7 @@ static void mqtt_offline_callback(MQTTClient *c)
 static void mq_publish(const char *topic, const char *send_str)
 {
     MQTTMessage message;
-    message.qos = QOS0;                /* QOS0：最多一次，不保证送达 */
+    message.qos = QOS1;                /* QOS1：至少一次，有 ACK 确认 */
     message.retained = 0;              /* 不保留消息 */
     message.payload = (void *)send_str;
     message.payloadlen = strlen(send_str);
@@ -395,6 +517,11 @@ int mqtt_app_publish_sensor(const sensor_data_t *data)
     if (!client.isconnected)
     {
         return -RT_ERROR;
+    }
+    if (!data->valid)
+    {
+        LOG_D("MQTT: skip publish (sensor data invalid)");
+        return -RT_ERROR;  /* 不上报无效数据 */
     }
 
     static char json_buf[1024];

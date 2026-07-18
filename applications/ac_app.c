@@ -63,7 +63,7 @@ int ac_app_init(void)
 {
     current_mode = AC_OFF;
     ac_running = 0;
-    manual_flag = 0;
+    manual_flag = 1;  /* 初始手动模式，避免开机即进入自动控制亮灯 */
 
     update_led();
 

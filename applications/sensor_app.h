@@ -12,6 +12,7 @@ typedef struct {
     float in_humidity;      /* 室内湿度，单位：百分比 %（DHT22） */
     int   window_state;     /* 窗户状态：1=开，0=关 */
     int   presence;         /* 人体存在：1=有人，0=无人 */
+    int   valid;            /* 传感器数据是否有效：1=有效，0=故障 */
 } sensor_data_t;
 
 /* 初始化传感器模块，成功返回 RT_EOK */

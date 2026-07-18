@@ -1,0 +1,19 @@
+﻿<script>
+var ws=null,tc=null,hc=null,tl=[],sh=[];
+function ui(d){
+ if(!d)return;
+ var e;
+ e=byId('outTemp');if(e)e.innerHTML=(d.out_temperature??'--')+'<span class="unit">C</span>';
+ e=byId('outHum');if(e)e.innerHTML=(d.out_humidity??'--')+'<span class="unit">%</span>';
+ e=byId('brightness');if(e)e.innerHTML=(d.brightness??'--')+'<span class="unit">lux</span>';
+ e=byId('inTemp');if(e)e.innerHTML=(d.in_temperature??'--')+'<span class="unit">C</span>';
+ e=byId('inHum');if(e)e.innerHTML=(d.in_humidity??'--')+'<span class="unit">%</span>';
+ e=byId('presence');if(e)e.innerHTML=d.presence?'有人':'无人';
+ if(d.gas_alarm!==undefined){e=byId('gasIndicator');if(e)e.className='indicator '+(d.gas_alarm?'danger':'safe');e=byId('gasText');if(e)e.textContent=d.gas_alarm?'!!!燃气泄漏!!!':'正常';}
+ if(d.auto_mode!==undefined){e=byId('modeText');if(e)e.textContent=d.auto_mode?'自动':'手动';e=byId('autoStatus');if(e)e.textContent=d.auto_mode?'自动':'手动';e=byId('autoToggle');if(e)e.className='toggle'+(d.auto_mode?' on':'');}
+ if(d.window_state!==undefined){e=byId('windowText');if(e)e.textContent=d.window_state?'开':'关';e=byId('windowStatus');if(e)e.textContent=d.window_state?'开':'关';e=byId('windowToggle');if(e)e.className='toggle'+(d.window_state?' on':'');}
+ if(d.fan_state!==undefined){e=byId('fanText');if(e)e.textContent=d.fan_state?'开':'关';e=byId('fanStatus');if(e)e.textContent=d.fan_state?'开':'关';e=byId('fanToggle');if(e)e.className='toggle'+(d.fan_state?' on':'');}
+ // 收到数据 = WiFi和MQTT都连上了
+ e=byId('wifiDot');if(e)e.className='dot on';
+ e=byId('mqttDot');if(e)e.className='dot on';
+}

@@ -81,18 +81,27 @@ void lcd_app_update(const sensor_data_t *data)
 
     /* 更新室外温度显示（AHT10） */
     lcd_fill(LCD_DATA_X, LCD_TEMP_Y, LCD_DATA_X_END, LCD_TEMP_Y + LCD_FONT_SIZE - 1, WHITE);
-    lcd_show_string(LCD_DATA_X, LCD_TEMP_Y, LCD_FONT_SIZE, "%d.%d\u2103",
-            (int)data->out_temperature, (int)(data->out_temperature * 10) % 10);
+    if (data->valid)
+        lcd_show_string(LCD_DATA_X, LCD_TEMP_Y, LCD_FONT_SIZE, "%d.%d\u2103",
+                (int)data->out_temperature, (int)(data->out_temperature * 10) % 10);
+    else
+        lcd_show_string(LCD_DATA_X, LCD_TEMP_Y, LCD_FONT_SIZE, "--\u2103");
 
     /* 更新室外湿度显示（AHT10） */
     lcd_fill(LCD_DATA_X, LCD_HUMI_Y, LCD_DATA_X_END, LCD_HUMI_Y + LCD_FONT_SIZE - 1, WHITE);
-    lcd_show_string(LCD_DATA_X, LCD_HUMI_Y, LCD_FONT_SIZE, "%d.%d%%",
-            (int)data->out_humidity, (int)(data->out_humidity * 10) % 10);
+    if (data->valid)
+        lcd_show_string(LCD_DATA_X, LCD_HUMI_Y, LCD_FONT_SIZE, "%d.%d%%",
+                (int)data->out_humidity, (int)(data->out_humidity * 10) % 10);
+    else
+        lcd_show_string(LCD_DATA_X, LCD_HUMI_Y, LCD_FONT_SIZE, "--%%");
 
     /* 更新光照强度显示 */
     lcd_fill(LCD_DATA_X, LCD_LIGHT_Y, LCD_DATA_X_END, LCD_LIGHT_Y + LCD_FONT_SIZE - 1, WHITE);
-    lcd_show_string(LCD_DATA_X, LCD_LIGHT_Y, LCD_FONT_SIZE, "%d.%dlux",
-            (int)data->brightness, ((int)(10 * data->brightness) % 10));
+    if (data->valid)
+        lcd_show_string(LCD_DATA_X, LCD_LIGHT_Y, LCD_FONT_SIZE, "%d.%dlux",
+                (int)data->brightness, ((int)(10 * data->brightness) % 10));
+    else
+        lcd_show_string(LCD_DATA_X, LCD_LIGHT_Y, LCD_FONT_SIZE, "--lux");
 }
 
 /*

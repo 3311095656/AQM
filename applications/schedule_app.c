@@ -116,6 +116,10 @@ int schedule_check(int hour, int min)
 
     for (i = 0; i < period_count; i++)
     {
+        /* 跳过被禁用的时段 */
+        if (!periods[i].enabled)
+            continue;
+
         int start = periods[i].start_hour * 60 + periods[i].start_min;
         int end   = periods[i].end_hour   * 60 + periods[i].end_min;
 

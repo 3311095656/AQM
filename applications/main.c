@@ -88,6 +88,7 @@ static void swdg_feed(void)
 /* 传感器数据全局缓存（主线程写入，网络线程读取，互斥保护） */
 static sensor_data_t g_sensor_data;
 static struct rt_mutex g_data_mutex;
+static int g_sensor_ok = 0;  /* 传感器是否初始化成功 */
 
 /* ==================== 网络线程 ==================== */
 
@@ -187,14 +188,22 @@ int main(void)
     lcd_app_init();
     fan_app_init();
 
-    if (sensor_app_init() != RT_EOK)
+    /* 安全线程优先启动，传感器可按需重新初始化 */
+    mq5_app_init();      /* 启动燃气报警线程（安全最高优先级） */
+
+    if (sensor_app_init() == RT_EOK)
     {
-        LOG_E("sensor init failed!");
-        return 0;
+        g_sensor_ok = 1;
+        LOG_I("All sensors OK");
+    }
+    else
+    {
+        g_sensor_ok = 0;
+        LOG_E("sensor init failed! Sensors disabled, safety threads still running.");
+        /* 不退出：燃气报警等安全线程已启动，系统以安全模式运行 */
     }
 
     oled_app_init();
-    mq5_app_init();      /* 启动燃气报警线程 */
     servo_app_init();    /* 初始化 SG90 舵机 */
     radar_app_init();    /* 初始化 LD2410C 人体雷达 */
     key_app_init();
@@ -220,9 +229,29 @@ int main(void)
     /* ---- 主循环：传感器 + 显示 + 风扇 ---- */
     while (1)
     {
-        /* 读取传感器 */
+        /* 读取传感器（仅当初始化成功）；失败时周期重试 */
         sensor_data_t data;
-        sensor_app_read(&data);
+        rt_memset(&data, 0, sizeof(data));
+        data.valid = 0;  /* 默认无效 */
+        if (g_sensor_ok)
+        {
+            sensor_app_read(&data);
+            data.valid = 1;  /* 读取成功，标记有效 */
+        }
+        else
+        {
+            static int retry_countdown = 0;
+            if (--retry_countdown <= 0)
+            {
+                retry_countdown = 30;  /* 每 30 秒重试一次 */
+                LOG_I("Retrying sensor init...");
+                if (sensor_app_init() == RT_EOK)
+                {
+                    g_sensor_ok = 1;
+                    LOG_I("Sensors recovered!");
+                }
+            }
+        }
 
         /* 补充窗户状态和人体存在 */
         data.window_state = servo_window_is_open();
@@ -266,7 +295,7 @@ int main(void)
                     LOG_I("Servo: Window OPEN (gas alarm)");
                 servo_window_open();
             }
-            else if (!mqtt_app_window_manual())
+            else if (!mqtt_app_window_manual() && g_sensor_ok)
             {
                 if (last_alarm)
                     LOG_I("Servo: Window CLOSE (gas safe)");
@@ -317,9 +346,25 @@ int main(void)
 
             /* 定时计划检查：根据 NTP 时间执行定时任务 */
             {
+                static int last_sch = -2;
+                static int saved_ac_manual = 0, saved_humi_manual = 0;
+                static int saved_ac_mode = AC_OFF, saved_humi_mode = HUMI_OFF;
+                static int saved_auto_state = 0;  /* 进入计划前的自动/手动状态 */
+
                 time_t now_sec = time(RT_NULL);
                 struct tm *now = localtime(&now_sec);
                 int sch = schedule_check(now->tm_hour, now->tm_min);
+
+                /* 进入计划：保存完整原始状态 */
+                if (sch >= 0 && last_sch < 0)
+                {
+                    saved_ac_manual = ac_manual_mode();
+                    saved_humi_manual = humi_manual_mode();
+                    saved_ac_mode = (int)ac_get_mode();
+                    saved_humi_mode = (int)humi_get_mode();
+                    saved_auto_state = mqtt_app_auto_mode();  /* 保存全体自动/手动状态 */
+                }
+
                 if (sch >= 0)
                 {
                     /* 在时间段内，根据模式执行 */
@@ -346,15 +391,21 @@ int main(void)
                         }
                     }
                 }
-                else if (sch == -2)
+                else if ((sch == -2 || sch == -1) && last_sch >= 0)
                 {
-                    /* 离开定时时间段，切自动 */
-                    if (!mqtt_app_auto_mode())
-                    {
-                        mqtt_set_auto_mode_remote(1);
-                        LOG_I("Schedule: AUTO (out of period)");
-                    }
+                    /* 离开定时时间段或计划被禁用，恢复进入前的完整原始状态 */
+                    ac_set_manual(saved_ac_manual);
+                    humi_set_manual(saved_humi_manual);
+                    ac_set_mode((ac_mode_t)saved_ac_mode);
+                    humi_set_mode((humi_mode_t)saved_humi_mode);
+                    /* 恢复风扇/窗户/蜂鸣器自动/手动状态 */
+                    mqtt_set_auto_mode_remote(saved_auto_state ? 1 : 0);
+                    LOG_I("Schedule: left period, restored AC=%d/%d Humi=%d/%d auto=%d",
+                          saved_ac_mode, saved_ac_manual, saved_humi_mode, saved_humi_manual,
+                          saved_auto_state);
                 }
+
+                last_sch = sch;
             }
 
             /* 燃气报警时强制关闭所有环境设备（开窗+风扇优先） */
@@ -363,12 +414,12 @@ int main(void)
                 ac_force_off();
                 humi_force_off();
             }
-            else
+            else if (g_sensor_ok)  /* 传感器正常才执行自动控制 */
             {
                 /* 空调自动控制（自动模式下，根据室内温度调节） */
                 if (!ac_manual_mode())
                 {
-                    if (ac_auto_control(data.out_temperature, ac_get_target_temp()))
+                    if (ac_auto_control(data.in_temperature, ac_get_target_temp()))
                     {
                         const char *mode_str[] = {"OFF", "COOL", "HEAT", "AUTO"};
                         LOG_I("AC: %s (in=%.1f, target=%.1f)", mode_str[ac_get_mode()], data.in_temperature, ac_get_target_temp());

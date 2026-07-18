@@ -95,8 +95,12 @@ int mq5_app_init(void)
                                         1024,
                                         8,   /* 高优先级，及时报警 */
                                         5);
-    if (tid)
-        rt_thread_startup(tid);
+    if (!tid)
+    {
+        LOG_E("MQ-5 alarm thread create failed!");
+        return -RT_ERROR;
+    }
+    rt_thread_startup(tid);
 
     return RT_EOK;
 }

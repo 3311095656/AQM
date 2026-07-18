@@ -272,13 +272,19 @@ void oled_app_update(const sensor_data_t *data, int gas_ok, int presence)
     oled_show_utf8(34, 0, line, oled_fb);
 
     /* 第 1 行：室内温度（DHT22） */
-    rt_snprintf(line, sizeof(line), "温度:%d.%d\u2103",
-            (int)data->in_temperature, (int)(data->in_temperature * 10) % 10);
+    if (data->valid)
+        rt_snprintf(line, sizeof(line), "温度:%d.%d\u2103",
+                (int)data->in_temperature, (int)(data->in_temperature * 10) % 10);
+    else
+        rt_snprintf(line, sizeof(line), "温度:--\u2103");
     oled_show_utf8(0, 16, line, oled_fb);
 
     /* 第 2 行：室内湿度（DHT22） */
-    rt_snprintf(line, sizeof(line), "湿度:%d.%d%%",
-            (int)data->in_humidity, (int)(data->in_humidity * 10) % 10);
+    if (data->valid)
+        rt_snprintf(line, sizeof(line), "湿度:%d.%d%%",
+                (int)data->in_humidity, (int)(data->in_humidity * 10) % 10);
+    else
+        rt_snprintf(line, sizeof(line), "湿度:--%%");
     oled_show_utf8(0, 32, line, oled_fb);
 
     /* 第 3 行：空调 + 加湿/除湿状态（固定位置防抖动） */
