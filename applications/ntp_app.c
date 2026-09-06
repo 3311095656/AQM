@@ -9,6 +9,7 @@
 
 #include <rtthread.h>
 #include <sys/time.h>
+#include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
 

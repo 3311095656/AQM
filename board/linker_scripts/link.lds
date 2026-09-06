@@ -133,6 +133,17 @@ SECTIONS
 
     _end = .;
 
+    /* CCM (RAM2 @0x10000000, 64K): CPU-only access (DMA unreachable), for CPU-only big static buffers */
+    .ccm_bss (NOLOAD) :
+    {
+        . = ALIGN(4);
+        __ccm_bss_start = .;
+        *(.ccm_bss)
+        *(.ccm_bss.*)
+        . = ALIGN(4);
+        __ccm_bss_end = .;
+    } > RAM2
+
     /* Stabs debugging sections.  */
     .stab          0 : { *(.stab) }
     .stabstr       0 : { *(.stabstr) }

@@ -15,6 +15,26 @@
 - Wi-Fi与MQTT断线重连
 - 传感器故障保护与自动恢复
 
+## 端侧语音识别（v2.1）
+
+- 全离线关键词识别（KWS），不依赖云端和网络
+- DS-CNN 深度可分离卷积神经网络，经 Cube.AI 部署到 MCU 端侧推理
+- 8 条语音指令控制设备：
+  - 开窗 / 关窗（舵机窗户）
+  - 开风扇 / 关风扇
+  - 制冷 / 制热（WS2812 模拟空调）
+  - 加湿 / 除湿
+- 支持 silence / unknown 拒识，避免误触发
+- 音频链路：INMP441 I2S 麦克风 → SPI3+I2S DMA 双缓冲采集（16kHz/16bit 单声道）→ 采集线程环形缓冲 → 推理线程
+- 特征提取：MFCC（CMSIS-DSP 库硬件加速）
+- 指令枚举与训练类别顺序严格对齐（`voice_cmd_t` ↔ `train_dscnn.py` 的 `CLASS_NAMES`）
+- 语音识别模块可整体裁剪：硬件/模型未就绪时安全返回，不启动线程
+- 附带完整训练工具链：
+  - `collect_audio.py` 音频采集脚本
+  - `train_dscnn.py` DS-CNN 训练脚本（输出 `kws_dscnn.h5` / `kws_dscnn_int8.tflite`）
+  - `data/` 10 类训练数据集（8 指令 + silence + unknown）
+  - `generate_*.py` Cube.AI 模型代码生成脚本
+
 ## 修复与优化
 
 - 修复空调自动控制误用室外温度的问题
@@ -43,3 +63,19 @@
 - 统一正式网页与Node API代理路径
 - 修复蜂鸣器引脚跨模块访问导致的编译问题
 - 完成最新固件重新构建
+
+## 构建修复（v2.1 语音功能引入）
+
+- 新增 `RT_USING_I2S` 独立编译开关：仅构建 HAL I2S 驱动（供 INMP441 采集），不引入 RT-Thread audio 框架组件；SAI 驱动仍由 `RT_USING_AUDIO` 门控
+- 自定义链接脚本新增 `.ccm_bss (NOLOAD)` 段：将纯 CPU 访问的大静态缓冲（`rw007_spi`，12.6KB，SPI2 无 DMA）搬迁至 CCM（RAM2 @0x10000000，64K，DMA 不可达），解除 RAM1 溢出，恢复堆空间约 10.8KB
+- 修复 NTP 模块 socket 函数隐式声明（补充 `sys/socket.h`）
+- 修复 LCD 初始化导出函数签名不匹配：以 `int (*)(void)` wrapper 适配 `INIT_COMPONENT_EXPORT`，消除编译警告及运行时脏参数隐患
+- 修复调度模块 `sscanf` 隐式声明（补充 `stdio.h`）
+- 清理全部编译警告，固件零警告构建通过
+
+## 构建
+
+- 开发环境：RT-Thread Studio + SCons + Python 3.13 + GNU ARM Embedded 5.4.1
+- 硬件平台：STM32F407-RT-SPARK（STM32F407ZGTx）
+- 注意：`rtconfig.h` 与 `SConscript` 会被 SCons 按 GBK 编码读取，注释必须使用 ASCII 英文
+- 编译产物：`rtthread.bin`（约 423KB）

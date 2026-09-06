@@ -23,6 +23,7 @@
 #include "ac_app.h"
 #include "humidifier_app.h"
 #include "schedule_app.h"
+#include "voice_app.h"
 
 #include <wlan_mgnt.h>
 #include <sys/time.h>
@@ -211,6 +212,7 @@ int main(void)
     ac_app_init();       /* 初始化空调控制模块 */
     schedule_app_init(); /* 初始化定时计划模块 */
     humidifier_app_init(); /* 初始化加湿/除湿模块 */
+    voice_app_init();      /* 初始化语音识别框架（硬件/模型未就绪时自动跳过） */
     swdg_init();         /* 启动软件看门狗（8 秒超时） */
 
     /* 初始化数据互斥锁 */

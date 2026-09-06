@@ -462,6 +462,7 @@
 #define BSP_USING_ON_CHIP_FLASH
 #define BSP_USING_SPI
 #define BSP_USING_SPI2
+#define RT_USING_I2S /* enable HAL I2S driver build (INMP441 audio capture, SPI3+I2S+DMA) */
 #define BSP_USING_I2C
 #define BSP_USING_I2C2
 #define BSP_I2C2_SCL_PIN 81

@@ -2,6 +2,7 @@
 #include <rtdevice.h>
 #include <board.h>
 #include "schedule_app.h"
+#include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
 
