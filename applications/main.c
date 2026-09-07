@@ -158,7 +158,7 @@ static void network_thread_entry(void *parameter)
             }
         }
 
-        /* 已连接时周期性上报 */
+        /* 已连接时周期性上报；MQTT 断线期间落盘 W25Q64 待补传 */
         if (connected && mqtt_app_is_connected())
         {
             static int pub_count = 0;
@@ -173,6 +173,23 @@ static void network_thread_entry(void *parameter)
             {
                 pub_count = 0;
                 mqtt_app_publish_sensor(&data);
+            }
+        }
+        else if (connected)
+        {
+            /* WiFi/MQTT 断线（非用户主动关闭）：继续构建数据走离线缓存 */
+            static int pub_count_off = 0;
+            sensor_data_t data;
+
+            rt_mutex_take(&g_data_mutex, RT_WAITING_FOREVER);
+            data = g_sensor_data;
+            rt_mutex_release(&g_data_mutex);
+
+            pub_count_off++;
+            if (pub_count_off >= MQTT_PUB_INTERVAL)
+            {
+                pub_count_off = 0;
+                mqtt_app_publish_sensor(&data);  /* 内部检测断网后走 offline_cache */
             }
         }
 

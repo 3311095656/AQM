@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include "paho_mqtt.h"
 #include "cJSON.h"
+#include "offline_cache.h"
 
 #define DBG_TAG "mqtt"
 #define DBG_LVL         DBG_LOG
@@ -40,6 +41,10 @@
 
 /* MQTT 客户端实例 */
 static MQTTClient client;
+
+/* 断网缓存补传：上线信号量与补传线程句柄 */
+static struct rt_semaphore s_flush_sem;
+static rt_thread_t s_flush_tid;
 
 /* MQTT 是否已启动的标志位 */
 static int is_started = 0;
@@ -389,12 +394,50 @@ static void mqtt_connect_callback(MQTTClient *c)
 }
 
 /*
+ * 断网数据补传线程
+ * MQTT 上线后被 kick，从 Flash 缓存中按序号从旧到新逐条补传。
+ */
+static void offcache_flush_entry(void *param)
+{
+    static char flush_buf[1024];
+
+    while (1)
+    {
+        rt_sem_take(&s_flush_sem, RT_WAITING_FOREVER);
+
+        if (!mqtt_app_is_connected())
+            continue;
+        if (offline_cache_init() != RT_EOK)
+            continue;
+
+        while (mqtt_app_is_connected())
+        {
+            rt_uint32_t seq, ts;
+            if (offline_cache_pop(flush_buf, sizeof(flush_buf), &seq, &ts) != 0)
+                break;      /* 缓存已清空 */
+
+            /* 补传：直接复用 mq_publish（内部自带 3 次重试） */
+            LOG_I("re-upload cached record seq=%u len=%d", seq, rt_strlen(flush_buf));
+            mq_publish(ONENET_PUB_TOPIC, flush_buf);
+
+            /* 无论本轮是否成功都提交，防止一条坏数据阻塞后续补传；
+             * mq_publish 内部已重试 3 次，仍失败说明链路异常，
+             * 此时 isconnected 会变为 0，外层循环退出。 */
+            offline_cache_commit(seq);
+            rt_thread_mdelay(100);  /* 补传限速，避免挤占实时数据带宽 */
+        }
+    }
+}
+
+/*
  * MQTT 上线回调函数
  * 当 MQTT 客户端成功连接到 OneNET 服务器后触发。
+ * 释放补传信号量，唤醒断网缓存补传线程。
  */
 static void mqtt_online_callback(MQTTClient *c)
 {
     LOG_I("MQTT connected, sensor data will be published");
+    rt_sem_release(&s_flush_sem);   /* 触发断网缓存补传 */
 }
 
 /*
@@ -500,6 +543,19 @@ int mqtt_app_init(void)
     LOG_I("Connect OneNET: %s", ONENET_MQTT_URI);
     LOG_I("Client ID: %s", ONENET_CLIENT_ID);
 
+    /* 初始化补传信号量并启动补传线程（仅一次） */
+    if (!s_flush_tid)
+    {
+        rt_sem_init(&s_flush_sem, "oflsh", 0, RT_IPC_FLAG_FIFO);
+        s_flush_tid = rt_thread_create("oflsh",
+                                       offcache_flush_entry, RT_NULL,
+                                       2048, 20, 10);
+        if (s_flush_tid)
+            rt_thread_startup(s_flush_tid);
+        else
+            LOG_E("offline flush thread create failed");
+    }
+
     /* 启动 MQTT 客户端（内部会创建独立线程处理连接和收发） */
     paho_mqtt_start(&client);
     is_started = 1;
@@ -510,14 +566,10 @@ int mqtt_app_init(void)
 /*
  * 将传感器数据上报到 OneNET 平台
  * 上报字段：室外温湿度、光照强度、室内温湿度、燃气报警、窗户状态、人体存在。
- * 未连接时直接返回 -RT_ERROR。
+ * 已连接：直接发布；断网：JSON 落盘 W25Q64 环形缓存，重连后自动补传。
  */
 int mqtt_app_publish_sensor(const sensor_data_t *data)
 {
-    if (!client.isconnected)
-    {
-        return -RT_ERROR;
-    }
     if (!data->valid)
     {
         LOG_D("MQTT: skip publish (sensor data invalid)");
@@ -594,8 +646,27 @@ int mqtt_app_publish_sensor(const sensor_data_t *data)
         tt_int, tt_dec,
         th_int, th_dec);
 
-    mq_publish(ONENET_PUB_TOPIC, json_buf);
-    LOG_D("publish: %s", json_buf);
+    if (client.isconnected)
+    {
+        mq_publish(ONENET_PUB_TOPIC, json_buf);
+        LOG_D("publish: %s", json_buf);
+    }
+    else
+    {
+        /* 断网：落盘 W25Q64 环形缓存，上线后自动补传 */
+        static rt_uint8_t ocache_fail_warned = 0;
+        if (offline_cache_init() == RT_EOK &&
+            offline_cache_push(json_buf, (rt_uint32_t)time(RT_NULL)) == 0)
+        {
+            ocache_fail_warned = 0;
+            LOG_D("cached offline: %s", json_buf);
+        }
+        else if (!ocache_fail_warned)
+        {
+            LOG_W("offline cache unavailable, data dropped");
+            ocache_fail_warned = 1;
+        }
+    }
 
     return RT_EOK;
 }

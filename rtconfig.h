@@ -447,6 +447,7 @@
 #define BSP_USING_ONBOARD_LCD_PWM_BL
 #define BSP_USING_ONBOARD_LCD_TEST
 #define BSP_USING_RW007_WLAN
+#define BSP_USING_SPI_FLASH
 #define BSP_USING_AHT21
 #define BSP_USING_AP3216C
 /* end of Onboard Peripheral Drivers */
