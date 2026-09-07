@@ -11,8 +11,14 @@ src = Split('''
 board.c
 CubeMX_Config/Src/stm32f4xx_hal_msp.c
 ''')
+
+# Cube.AI generated network code (weights live in Flash, activations in RAM)
+src += Glob('CubeMX_Config/Src/kws_dscnn*.c')
+
 path =  [cwd]
 path += [cwd + '/CubeMX_Config/Inc']
+# Cube.AI runtime headers
+path += [cwd + '/CubeMX_Config/Middlewares/ST/AI/Inc']
 
 CPPDEFINES = ['STM32F407xx']
 group = DefineGroup('Drivers', src, depend = [''], CPPPATH = path, CPPDEFINES = CPPDEFINES)

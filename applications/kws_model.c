@@ -45,13 +45,15 @@ static ai_handle  g_net  = AI_HANDLE_NULL;
 static ai_buffer *g_ain  = NULL;
 static ai_buffer *g_aout = NULL;
 
-/* 激活内存：放主 SRAM；紧张时可移到 CCM（链接脚本加 .ccmram 段后改 section 属性）。
- * 大小由 Cube.AI 分析报告给出。 */
-AI_ALIGNED(32)
+/* 激活内存（约 71KB）：放外部 SRAM（FSMC Bank3 @0x68000000，1MB，链接脚本
+ * .MCUlcdgrambysram 段，NOLOAD）。片内装不下（CCM 共 64K < 71K，RAM1 堆余量也不足）；
+ * 该缓冲 CPU-only、无需零初始化，NOLOAD 段无启动时序依赖，FSMC 在 board init 已就绪。 */
+AI_ALIGNED(32) __attribute__((section(".MCUlcdgrambysram")))
 static ai_u8 g_activations[AI_KWS_DSCNN_DATA_ACTIVATIONS_SIZE];
 
-/* int8 输入/输出原始 buffer（int8 模型下字节数 == 元素数） */
-AI_ALIGNED(32)
+/* int8 输入/输出原始 buffer（int8 模型下字节数 == 元素数）。
+ * 输入缓冲 3.9KB 放 CCM(RAM2)（CPU-only 读写），输出仅 10 字节留在主 SRAM。 */
+AI_ALIGNED(32) __attribute__((section(".ccm_bss")))
 static ai_i8 g_in[AI_KWS_DSCNN_IN_1_SIZE_BYTES];    /* = 98*40 = 3920 */
 AI_ALIGNED(32)
 static ai_i8 g_out[AI_KWS_DSCNN_OUT_1_SIZE_BYTES];  /* = 8 */

@@ -40,8 +40,10 @@
 /* 模型类别数：6 指令 + silence + unknown */
 #define VOICE_NUM_CLASSES    (VOICE_NUM_CMDS + 2)
 
-/* MFCC 特征图与推理输出（静态分配，不放线程栈） */
-static float g_mfcc[MFCC_NUM_FRAMES * MFCC_NUM_COEFFS];
+/* MFCC 特征图与推理输出（静态分配，不放线程栈）。
+ * 特征图约 15.7KB 放 CCM(RAM2) 的 .ccm_bss 段（CPU-only 访问），为主 SRAM 腾空间。 */
+#define VOICE_CCM __attribute__((section(".ccm_bss")))
+static VOICE_CCM float g_mfcc[MFCC_NUM_FRAMES * MFCC_NUM_COEFFS];
 static float g_probs[VOICE_NUM_CLASSES];
 
 static int g_enabled = 0;   /* 采集 + 推理是否均就绪 */

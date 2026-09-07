@@ -38,24 +38,27 @@ typedef struct {
     float im;
 } mfcc_cplx_t;
 
-/* ---- 预计算表（mfcc_init 填充，放 RAM） ---- */
-static float g_hann[MFCC_FRAME_LEN];                       /* Hann 窗 */
-static float g_dct[MFCC_NUM_COEFFS][MFCC_NUM_COEFFS];      /* DCT-II 矩阵 */
-static float g_bin_mel[MFCC_FFT_LEN / 2 + 1];              /* FFT bin -> mel */
-static float g_mel_edges[MFCC_NUM_COEFFS + 2];             /* mel 域边缘点 */
+/* ---- 预计算表（mfcc_init 填充） ----
+ * MFCC 全程 CPU 计算、无 DMA 参与，静态缓冲统一放 CCM(RAM2) 的 .ccm_bss 段，
+ * 为主 SRAM(RAM1) 腾空间给 DMA 缓冲与系统堆。 */
+#define MFCC_CCM __attribute__((section(".ccm_bss")))
+static MFCC_CCM float g_hann[MFCC_FRAME_LEN];                       /* Hann 窗 */
+static MFCC_CCM float g_dct[MFCC_NUM_COEFFS][MFCC_NUM_COEFFS];      /* DCT-II 矩阵 */
+static MFCC_CCM float g_bin_mel[MFCC_FFT_LEN / 2 + 1];              /* FFT bin -> mel */
+static MFCC_CCM float g_mel_edges[MFCC_NUM_COEFFS + 2];             /* mel 域边缘点 */
 
 /* ---- FFT 相关缓冲 ---- */
-static float g_fft_in[MFCC_FFT_LEN];   /* 实数输入（加窗后） */
+static MFCC_CCM float g_fft_in[MFCC_FFT_LEN];   /* 实数输入（加窗后） */
 #if MFCC_USE_CMSIS_DSP
 static arm_rfft_fast_instance_f32 g_rfft;
-static float g_fft_out[MFCC_FFT_LEN];  /* arm_rfft 输出（特殊交错格式） */
+static MFCC_CCM float g_fft_out[MFCC_FFT_LEN];  /* arm_rfft 输出（特殊交错格式） */
 #else
-static mfcc_cplx_t g_fft[MFCC_FFT_LEN];
+static MFCC_CCM mfcc_cplx_t g_fft[MFCC_FFT_LEN];
 #endif
 
 /* ---- 工作缓冲 ---- */
-static float g_mag[MFCC_FFT_LEN / 2 + 1];
-static float g_mel[MFCC_NUM_COEFFS];
+static MFCC_CCM float g_mag[MFCC_FFT_LEN / 2 + 1];
+static MFCC_CCM float g_mel[MFCC_NUM_COEFFS];
 
 /* HTK mel 频率转换 */
 static float hz_to_mel(float hz)

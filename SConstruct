@@ -59,5 +59,13 @@ if not os.path.exists('libraries'):
     # include drivers
     objs.extend(SConscript(os.path.join(libraries_path_prefix, 'HAL_Drivers', 'SConscript')))
 
+# X-CUBE-AI runtime static library. Standard SCons library flags: -L<dir> -lai_runtime.
+# SCons emits $_LIBFLAGS after $SOURCES in LINKCOM, so the archive is placed after
+# all objects on the link command line, which is required for archives to resolve
+# undefined references.
+if os.path.isfile('libraries/ai_runtime/Lib/GCC/libai_runtime.a'):
+    env.Append(LIBS=['ai_runtime'],
+               LIBPATH=[os.path.abspath('libraries/ai_runtime/Lib/GCC')])
+
 # make a building
 DoBuilding(TARGET, objs)

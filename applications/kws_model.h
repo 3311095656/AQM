@@ -9,7 +9,7 @@
  */
 
 /* 开关：已用 STM32Cube.AI 生成并放入工程后置 1 */
-#define KWS_MODEL_ENABLE   0
+#define KWS_MODEL_ENABLE   1
 
 /* 模型输入输出维度（与训练脚本 train_dscnn.py 一致，需与生成结果核对） */
 #define KWS_INPUT_SIZE     (98 * 40)   /* MFCC 特征：98 帧 x 40 维 */
